@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Escola,
   Turma,
@@ -35,12 +35,32 @@ import {
   AlertTriangle,
   UserCheck,
   Lock,
+  Printer,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Edit3,
+  Save,
+  X,
 } from 'lucide-react';
 import { VendedoresComissoesModule } from './VendedoresComissoesModule';
 import { SalesCommissionReport } from './SalesCommissionReport';
 import { AdminDashboardFinanceiro } from './AdminDashboardFinanceiro';
 import { EstoqueMonitor } from './EstoqueMonitor';
 import { useFirebaseNotifications } from '../hooks/useFirebaseNotifications';
+import {
+  signInWithGoogleAdmin,
+  auth,
+  onAuthStateChanged,
+  signOut,
+  ADMIN_EMAILS as FIREBASE_ADMIN_EMAILS,
+} from '../lib/firebase';
+
+// Constante com os 2 endereços permitidos para acesso ao Painel Administrativo
+export const ADMIN_EMAILS: string[] = [
+  'acreanamarcia@gmail.com',
+  'diretoria@papelariaglobo.com.br',
+];
 
 interface AdminPanelProps {
   escolas: Escola[];
@@ -49,12 +69,15 @@ interface AdminPanelProps {
   pedidos: Pedido[];
   vendedores: Vendedor[];
   onSaveEscola: (escola: Escola) => void;
+  onDeleteEscola?: (escolaId: string) => void;
   onSaveTurma: (turma: Turma) => void;
+  onDeleteTurma?: (turmaId: string) => void;
   onSaveKit: (kit: Kit) => void;
   onUpdateStatus: (pedidoId: string, status: OrderStatus, whatsappNotificado?: boolean) => void;
   onSaveVendedor?: (vendedor: Vendedor) => void;
   onDeleteVendedor?: (vendedorId: string) => void;
   onResetData: () => void;
+  onBackToStore?: () => void;
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
@@ -64,12 +87,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   pedidos,
   vendedores,
   onSaveEscola,
+  onDeleteEscola,
   onSaveTurma,
+  onDeleteTurma,
   onSaveKit,
   onUpdateStatus,
   onSaveVendedor,
   onDeleteVendedor,
   onResetData,
+  onBackToStore,
 }) => {
   const { showToast } = useToast();
   const { notifyOrderStatusChange } = useFirebaseNotifications();
@@ -133,11 +159,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         nivelLabel: 'Nível 1 - Acesso Operacional Total',
       },
     },
+    'acreanamarcia@gmail.com': {
+      senha: 'globo2027',
+      user: {
+        nome: 'Márcia Albuquerque (Google Admin)',
+        email: 'acreanamarcia@gmail.com',
+        cargo: 'Gerência Geral & Operações',
+        nivel: 'gerencia_total',
+        nivelLabel: 'Nível 1 - Acesso Operacional Total',
+      },
+    },
   };
 
   // Admin authentication state
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => {
-    return localStorage.getItem('kitglobo_admin_auth') === 'true' || true;
+    return localStorage.getItem('kitglobo_admin_auth') === 'true';
   });
 
   const [loggedAdminUser, setLoggedAdminUser] = useState<AdminUser>(() => {
@@ -155,6 +191,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [adminEmail, setAdminEmail] = useState('gerencia@papelariaglobo.com.br');
   const [adminPassword, setAdminPassword] = useState('globo2027');
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  // Google Gmail Authentication Handler
+  const handleGoogleLogin = async () => {
+    setIsGoogleLoading(true);
+    setLoginError(null);
+    try {
+      const result = await signInWithGoogleAdmin();
+      if (result && result.email) {
+        const emailLower = result.email.toLowerCase();
+        let userObj: AdminUser;
+
+        if (emailLower === 'diretoria@papelariaglobo.com.br') {
+          userObj = AUTHORIZED_USERS['diretoria@papelariaglobo.com.br'].user;
+        } else if (AUTHORIZED_USERS[emailLower]) {
+          userObj = AUTHORIZED_USERS[emailLower].user;
+        } else {
+          userObj = {
+            nome: result.name || 'Márcia Albuquerque',
+            email: emailLower,
+            cargo: 'Gerência Geral & Operações',
+            nivel: 'gerencia_total',
+            nivelLabel: 'Nível 1 - Acesso Operacional Total',
+          };
+        }
+
+        setIsAdminLoggedIn(true);
+        setLoggedAdminUser(userObj);
+        localStorage.setItem('kitglobo_admin_auth', 'true');
+        localStorage.setItem('kitglobo_admin_user', JSON.stringify(userObj));
+        showToast(
+          `Bem-vindo(a), ${userObj.nome}!`,
+          `Autenticado via Google Gmail: ${userObj.email}`,
+          'success'
+        );
+      }
+    } catch (err: any) {
+      const msg = err?.message || 'Falha na autenticação com Google Gmail.';
+      setLoginError(msg);
+      showToast('Acesso Negado', msg, 'error');
+    } finally {
+      setIsGoogleLoading(false);
+    }
+  };
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,19 +253,183 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         'success'
       );
     } else {
-      setLoginError('Credenciais inválidas. O acesso é restrito exclusivamente às 2 pessoas autorizadas.');
+      setLoginError('Credenciais inválidas. O acesso é restrito exclusivamente às pessoas autorizadas.');
     }
   };
 
   const handleAdminLogout = () => {
+    signOut(auth).catch(() => {});
     setIsAdminLoggedIn(false);
     localStorage.removeItem('kitglobo_admin_auth');
     localStorage.removeItem('kitglobo_admin_user');
     showToast('Sessão encerrada', 'Você saiu do Painel Administrativo.', 'info');
+    if (onBackToStore) {
+      onBackToStore();
+    }
   };
+
+  // Proteção por email autorizado no Firebase Auth para o Painel Administrativo
+  useEffect(() => {
+    let isSubscribed = true;
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (!isSubscribed) return;
+
+      // 1. Usuário não autenticado no Firebase Auth
+      if (!currentUser) {
+        // Valida se há sessão local prévia autorizada (fallback para ambiente de testes/iframe)
+        const savedAuth = localStorage.getItem('kitglobo_admin_auth') === 'true';
+        const savedUserStr = localStorage.getItem('kitglobo_admin_user');
+        let localEmail = '';
+        if (savedUserStr) {
+          try {
+            localEmail = JSON.parse(savedUserStr)?.email?.toLowerCase() || '';
+          } catch (e) {}
+        }
+        const isLocalAuthorized = savedAuth && ADMIN_EMAILS.some((adm) => adm.toLowerCase() === localEmail);
+
+        if (!isLocalAuthorized) {
+          setIsAdminLoggedIn(false);
+          showToast(
+            'Acesso Restrito',
+            'Usuário não autenticado. Redirecionando para a tela inicial...',
+            'error'
+          );
+          if (onBackToStore) {
+            onBackToStore();
+          } else if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+            window.location.href = '/';
+          }
+        }
+        return;
+      }
+
+      // 2. Validação se o email autenticado está na lista ADMIN_EMAILS (2 endereços permitidos)
+      const userEmail = currentUser.email?.toLowerCase().trim() || '';
+      const isAuthorized = ADMIN_EMAILS.some(
+        (adminEmail) => adminEmail.toLowerCase() === userEmail
+      );
+
+      if (!isAuthorized) {
+        // Email não autorizado: desconecta e redireciona para a tela inicial
+        signOut(auth).catch(() => {});
+        setIsAdminLoggedIn(false);
+        localStorage.removeItem('kitglobo_admin_auth');
+        localStorage.removeItem('kitglobo_admin_user');
+        showToast(
+          'Acesso Negado',
+          `O e-mail ${currentUser.email || 'não identificado'} não possui permissão administrativa. Redirecionando...`,
+          'error'
+        );
+        if (onBackToStore) {
+          onBackToStore();
+        } else if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+          window.location.href = '/';
+        }
+        return;
+      }
+
+      // 3. Usuário autenticado e com email autorizado em ADMIN_EMAILS
+      setIsAdminLoggedIn(true);
+      const userObj: AdminUser = {
+        nome: currentUser.displayName || (userEmail === 'acreanamarcia@gmail.com' ? 'Márcia Albuquerque' : 'Roberto Melo'),
+        email: userEmail,
+        cargo: userEmail === 'acreanamarcia@gmail.com' ? 'Gerência Geral & Operações' : 'Diretor Financeiro & Auditoria',
+        nivel: userEmail === 'acreanamarcia@gmail.com' ? 'gerencia_total' : 'diretoria_financeira',
+        nivelLabel: userEmail === 'acreanamarcia@gmail.com' ? 'Nível 1 - Acesso Operacional Total' : 'Nível 2 - Acesso Financeiro & Gestão',
+      };
+      setLoggedAdminUser(userObj);
+      localStorage.setItem('kitglobo_admin_auth', 'true');
+      localStorage.setItem('kitglobo_admin_user', JSON.stringify(userObj));
+    });
+
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+    };
+  }, [onBackToStore, showToast]);
 
   // Kit editor state
   const [selectedKitTurmaId, setSelectedKitTurmaId] = useState(turmas[0]?.id || '');
+  const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [tempPrice, setTempPrice] = useState('');
+
+  // Modais de Inclusão de Produtos e Materiais com Upload de Imagem Local
+  const [showAddExtraModal, setShowAddExtraModal] = useState(false);
+  const [extraNome, setExtraNome] = useState('');
+  const [extraPreco, setExtraPreco] = useState('');
+  const [extraDescricao, setExtraDescricao] = useState('');
+  const [extraCategoria, setExtraCategoria] = useState<ItemExtra['categoria']>('mochilas_estojos');
+  const [extraImagePreview, setExtraImagePreview] = useState<string | null>(null);
+
+  const [showAddItemModal, setShowAddItemModal] = useState(false);
+  const [itemNome, setItemNome] = useState('');
+  const [itemQuantidade, setItemQuantidade] = useState<number>(1);
+  const [itemUnidade, setItemUnidade] = useState('unid');
+  const [itemMarca, setItemMarca] = useState('');
+  const [itemCategoria, setItemCategoria] = useState<ItemKit['categoria']>('caderno');
+  const [itemImagePreview, setItemImagePreview] = useState<string | null>(null);
+
+  // Escola Edit State
+  const [showEditEscola, setShowEditEscola] = useState(false);
+  const [editingEscola, setEditingEscola] = useState<Escola | null>(null);
+  const [editEscolaNome, setEditEscolaNome] = useState('');
+  const [editEscolaEndereco, setEditEscolaEndereco] = useState('');
+  const [editEscolaBairro, setEditEscolaBairro] = useState('');
+  const [editEscolaTelefone, setEditEscolaTelefone] = useState('');
+  const [editEscolaBadgeColor, setEditEscolaBadgeColor] = useState('#0D3B8E');
+  const [editEscolaAtivo, setEditEscolaAtivo] = useState(true);
+
+  // Extra Product Edit State
+  const [showEditExtraModal, setShowEditExtraModal] = useState(false);
+  const [editingExtra, setEditingExtra] = useState<ItemExtra | null>(null);
+  const [editExtraNome, setEditExtraNome] = useState('');
+  const [editExtraPreco, setEditExtraPreco] = useState('');
+  const [editExtraDescricao, setEditExtraDescricao] = useState('');
+  const [editExtraCategoria, setEditExtraCategoria] = useState<ItemExtra['categoria']>('mochilas_estojos');
+  const [editExtraImagePreview, setEditExtraImagePreview] = useState<string | null>(null);
+
+  // Mandatory Item Edit State
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState<ItemKit | null>(null);
+  const [editItemNome, setEditItemNome] = useState('');
+  const [editItemQuantidade, setEditItemQuantidade] = useState<number>(1);
+  const [editItemUnidade, setEditItemUnidade] = useState('unid');
+  const [editItemMarca, setEditItemMarca] = useState('');
+  const [editItemCategoria, setEditItemCategoria] = useState<ItemKit['categoria']>('caderno');
+  const [editItemImagePreview, setEditItemImagePreview] = useState<string | null>(null);
+
+  // Leitor de arquivo local (FileReader) para conversão em base64 DataURL
+  const handleLocalImageUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    onPreviewReady: (dataUrl: string | null) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showToast('Formato Inválido', 'Selecione uma imagem válida (PNG, JPG, WEBP).', 'error');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Arquivo Grande', 'A imagem deve ter até 5MB.', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        onPreviewReady(dataUrl);
+        showToast('Foto Carregada!', `${file.name} pronta para ser salva no kit.`, 'success');
+      }
+    };
+    reader.onerror = () => {
+      showToast('Erro no Upload', 'Falha ao processar arquivo local.', 'error');
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Handle status update & WhatsApp / Push FCM dispatch
   const handleStatusChange = (pedido: Pedido, newStatus: OrderStatus) => {
@@ -272,6 +516,139 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setNovaTurmaSerie('');
   };
 
+  // Handlers para Edição e Exclusão de Escolas
+  const handleOpenEditEscola = (esc: Escola) => {
+    setEditingEscola(esc);
+    setEditEscolaNome(esc.nome);
+    setEditEscolaEndereco(esc.endereco);
+    setEditEscolaBairro(esc.bairro);
+    setEditEscolaTelefone(esc.telefone || '');
+    setEditEscolaBadgeColor(esc.badge_color || '#0D3B8E');
+    setEditEscolaAtivo(esc.ativo);
+    setShowEditEscola(true);
+  };
+
+  const handleSaveEditEscola = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingEscola || !editEscolaNome.trim()) return;
+
+    const updated: Escola = {
+      ...editingEscola,
+      nome: editEscolaNome.trim(),
+      endereco: editEscolaEndereco.trim() || 'Rio Branco - AC',
+      bairro: editEscolaBairro.trim() || 'Centro, Rio Branco - AC',
+      telefone: editEscolaTelefone.trim() || undefined,
+      badge_color: editEscolaBadgeColor,
+      ativo: editEscolaAtivo,
+    };
+
+    onSaveEscola(updated);
+    showToast('Escola Atualizada!', `${updated.nome} alterada com sucesso.`, 'success');
+    setShowEditEscola(false);
+    setEditingEscola(null);
+  };
+
+  const handleDeleteEscola = (esc: Escola) => {
+    const escTurmas = turmas.filter((t) => t.escola_id === esc.id);
+    const msg =
+      escTurmas.length > 0
+        ? `Atenção: A instituição "${esc.nome}" possui ${escTurmas.length} turmas vinculadas. Deseja realmente excluí-la do catálogo?`
+        : `Deseja realmente excluir a escola "${esc.nome}"?`;
+
+    if (!window.confirm(msg)) return;
+
+    if (onDeleteEscola) {
+      onDeleteEscola(esc.id);
+      showToast('Escola Removida', `${esc.nome} foi excluída do sistema.`, 'info');
+    }
+  };
+
+  const handleToggleEscolaAtivo = (esc: Escola) => {
+    const updated: Escola = { ...esc, ativo: !esc.ativo };
+    onSaveEscola(updated);
+    showToast(
+      updated.ativo ? 'Escola Ativada' : 'Escola Oculta',
+      `${updated.nome} agora está ${updated.ativo ? 'visível na loja' : 'desativada'}.`,
+      'info'
+    );
+  };
+
+  // Handlers para Edição de Produtos Extras
+  const handleOpenEditExtra = (extra: ItemExtra) => {
+    setEditingExtra(extra);
+    setEditExtraNome(extra.nome);
+    setEditExtraPreco(extra.preco.toString());
+    setEditExtraDescricao(extra.descricao);
+    setEditExtraCategoria(extra.categoria);
+    setEditExtraImagePreview(extra.foto_url || null);
+    setShowEditExtraModal(true);
+  };
+
+  const handleSaveEditExtra = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeKit || !editingExtra || !editExtraNome.trim() || !editExtraPreco) return;
+
+    const updatedExtra: ItemExtra = {
+      ...editingExtra,
+      nome: editExtraNome.trim(),
+      preco: parseFloat(editExtraPreco) || 0,
+      descricao: editExtraDescricao.trim() || 'Item adicional comercializado pela Papelaria Globo',
+      categoria: editExtraCategoria,
+      foto_url: editExtraImagePreview || undefined,
+    };
+
+    const updatedKit: Kit = {
+      ...activeKit,
+      itens_extras_json: activeKit.itens_extras_json.map((ex) =>
+        ex.id === editingExtra.id ? updatedExtra : ex
+      ),
+    };
+
+    onSaveKit(updatedKit);
+    showToast('Produto Atualizado!', `${updatedExtra.nome} alterado com sucesso.`, 'success');
+    setShowEditExtraModal(false);
+    setEditingExtra(null);
+  };
+
+  // Handlers para Edição de Itens Obrigatórios
+  const handleOpenEditItem = (item: ItemKit) => {
+    setEditingItem(item);
+    setEditItemNome(item.nome);
+    setEditItemQuantidade(item.quantidade);
+    setEditItemUnidade(item.unidade);
+    setEditItemMarca(item.marca_sugerida || '');
+    setEditItemCategoria(item.categoria);
+    setEditItemImagePreview(item.foto_url || null);
+    setShowEditItemModal(true);
+  };
+
+  const handleSaveEditItem = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeKit || !editingItem || !editItemNome.trim() || editItemQuantidade <= 0) return;
+
+    const updatedItem: ItemKit = {
+      ...editingItem,
+      nome: editItemNome.trim(),
+      quantidade: editItemQuantidade,
+      unidade: editItemUnidade.trim() || 'unid',
+      marca_sugerida: editItemMarca.trim() || undefined,
+      categoria: editItemCategoria,
+      foto_url: editItemImagePreview || undefined,
+    };
+
+    const updatedKit: Kit = {
+      ...activeKit,
+      itens_json: activeKit.itens_json.map((it) =>
+        it.id === editingItem.id ? updatedItem : it
+      ),
+    };
+
+    onSaveKit(updatedKit);
+    showToast('Material Atualizado!', `${updatedItem.nome} alterado com sucesso.`, 'success');
+    setShowEditItemModal(false);
+    setEditingItem(null);
+  };
+
   // Render Login Gate if user is not logged in as admin
   if (!isAdminLoggedIn) {
     return (
@@ -283,37 +660,87 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
           <div>
             <span className="bg-[#FFC700] text-[#0D3B8E] text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-              Área Restrita · 2 Níveis de Acesso
+              Área Restrita · Firebase Auth
             </span>
             <h3 className="text-xl font-black text-[#0D3B8E] mt-1">Painel Administrativo Papelaria Globo</h3>
             <p className="text-xs text-slate-500">
-              Acesso restrito exclusivamente às <strong>2 pessoas autorizadas</strong> da gestão 2027.
+              Acesso exclusivo para administradores autorizados da gestão 2027.
             </p>
           </div>
         </div>
 
-        {/* 2 Perfis Autorizados (Seletor Rápido) */}
-        <div className="mt-5 space-y-2">
-          <span className="text-[11px] font-bold text-slate-600 block">Selecione o perfil autorizado:</span>
+        {/* Botão de Login com Google (Gmail) */}
+        <div className="mt-6 space-y-3">
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={isGoogleLoading}
+            className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-2xl border-2 border-slate-300 shadow-md hover:shadow-lg transition-all active:scale-[0.99] cursor-pointer disabled:opacity-50"
+          >
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+              />
+            </svg>
+            <span className="text-xs font-black text-slate-800">
+              {isGoogleLoading ? 'Autenticando via Google...' : 'Entrar com Google (Gmail)'}
+            </span>
+          </button>
+
+          <div className="bg-blue-50/80 border border-blue-200/80 p-2.5 rounded-xl text-[11px] text-[#0D3B8E] space-y-1">
+            <span className="font-bold flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#0D3B8E]" />
+              E-mails com liberação de acesso Google:
+            </span>
+            <p className="text-[10px] text-slate-600 font-mono">
+              acreanamarcia@gmail.com · gerencia@papelariaglobo.com.br · diretoria@papelariaglobo.com.br
+            </p>
+          </div>
+
+          <div className="relative flex py-2 items-center">
+            <div className="grow border-t border-slate-200"></div>
+            <span className="shrink mx-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              ou acesse com perfil e senha
+            </span>
+            <div className="grow border-t border-slate-200"></div>
+          </div>
+        </div>
+
+        {/* Perfis Autorizados (Seletor Rápido) */}
+        <div className="mt-2 space-y-2">
+          <span className="text-[11px] font-bold text-slate-600 block">Selecione o perfil administrativo:</span>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <button
               type="button"
               onClick={() => {
-                setAdminEmail('gerencia@papelariaglobo.com.br');
+                setAdminEmail('acreanamarcia@gmail.com');
                 setAdminPassword('globo2027');
               }}
-              className={`p-3 rounded-xl border text-left transition-all ${
-                adminEmail === 'gerencia@papelariaglobo.com.br'
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                adminEmail === 'acreanamarcia@gmail.com'
                   ? 'border-[#0D3B8E] bg-blue-50/70 ring-2 ring-[#0D3B8E]/20'
                   : 'border-slate-200 hover:border-slate-300 bg-slate-50'
               }`}
             >
               <div className="flex items-center gap-1.5 font-bold text-[#0D3B8E]">
                 <UserCheck className="w-4 h-4 text-[#D92323]" />
-                <span>Pessoa 1: Gerente Geral</span>
+                <span>Pessoa 1: Márcia (Gmail)</span>
               </div>
-              <span className="text-[11px] text-slate-500 block truncate">gerencia@papelariaglobo.com.br</span>
-              <span className="text-[10px] text-emerald-700 font-bold block mt-0.5">Nível 1 · Acesso Total</span>
+              <span className="text-[11px] text-slate-500 block truncate">acreanamarcia@gmail.com</span>
+              <span className="text-[10px] text-emerald-700 font-bold block mt-0.5">Nível 1 · Gerência Total</span>
             </button>
 
             <button
@@ -322,7 +749,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 setAdminEmail('diretoria@papelariaglobo.com.br');
                 setAdminPassword('admin2027');
               }}
-              className={`p-3 rounded-xl border text-left transition-all ${
+              className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                 adminEmail === 'diretoria@papelariaglobo.com.br'
                   ? 'border-[#0D3B8E] bg-blue-50/70 ring-2 ring-[#0D3B8E]/20'
                   : 'border-slate-200 hover:border-slate-300 bg-slate-50'
@@ -330,10 +757,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             >
               <div className="flex items-center gap-1.5 font-bold text-[#0D3B8E]">
                 <UserCheck className="w-4 h-4 text-[#FFC700]" />
-                <span>Pessoa 2: Diretor Financeiro</span>
+                <span>Pessoa 2: Roberto Melo</span>
               </div>
               <span className="text-[11px] text-slate-500 block truncate">diretoria@papelariaglobo.com.br</span>
-              <span className="text-[10px] text-purple-700 font-bold block mt-0.5">Nível 2 · Financeiro & Estoque</span>
+              <span className="text-[10px] text-purple-700 font-bold block mt-0.5">Nível 2 · Finanças & Auditoria</span>
             </button>
           </div>
         </div>
@@ -385,8 +812,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="bg-white rounded-3xl border-2 border-[#0D3B8E]/20 shadow-2xl overflow-hidden my-6">
+      {/* Cabeçalho Limpo para Impressão com Dados Oficiais da Papelaria Globo */}
+      <div className="hidden print:block p-6 border-b-2 border-slate-900 bg-white">
+        <div className="flex justify-between items-start">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[#D92323] font-black text-sm tracking-wider">PAPELARIA</span>
+              <span className="font-black text-[#0D3B8E] text-xl">GLOBO LTDA</span>
+              <span className="bg-[#FFC700] text-[#0D3B8E] text-[10px] font-black px-2 py-0.5 rounded">kitGlobo 2027</span>
+            </div>
+            <p className="text-xs text-slate-700 mt-1 font-semibold">
+              CNPJ: 04.123.456/0001-89 · Av. Brasil, 452 - Centro, Rio Branco - AC · CEP 69900-068
+            </p>
+            <p className="text-xs font-bold text-[#0D3B8E] mt-1">
+              RELATÓRIO GERENCIAL OFICIAL · {activeTab === 'financeiro' ? 'Dashboard Financeiro de Vendas' : activeTab === 'estoque' ? 'Monitoramento de Estoque de Kits (Alerta 80%)' : activeTab === 'comissoes' ? 'Relatório de Comissões de Vendas (2%)' : 'Controle Operacional e Pedidos'}
+            </p>
+          </div>
+          <div className="text-right text-[11px] text-slate-600 space-y-0.5">
+            <p>Emissão: <strong>{new Date().toLocaleDateString('pt-BR')}</strong> às {new Date().toLocaleTimeString('pt-BR')}</p>
+            <p>Operador: <strong>{loggedAdminUser.nome}</strong></p>
+            <p className="font-mono text-emerald-800 font-bold">{loggedAdminUser.nivelLabel}</p>
+          </div>
+        </div>
+      </div>
+
       {/* Admin Top Bar com Usuário Logado */}
-      <div className="bg-[#0D3B8E] text-white p-5 border-b-4 border-[#FFC700]">
+      <div className="bg-[#0D3B8E] text-white p-5 border-b-4 border-[#FFC700] no-print">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-11 h-11 rounded-2xl bg-[#D92323] flex items-center justify-center text-white shadow-md border-2 border-[#FFC700]">
@@ -410,6 +861,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => {
+                window.print();
+              }}
+              className="no-print flex items-center gap-1.5 px-3 py-1.5 text-xs font-black bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] rounded-xl shadow-md border-2 border-[#FFC700] transition-transform active:scale-95 cursor-pointer"
+              title="Gerar versão impressa limpa com gráficos e resumos financeiros"
+            >
+              <Printer className="w-3.5 h-3.5 text-[#0D3B8E]" />
+              <span>Imprimir Relatório</span>
+            </button>
+
+            <button
+              onClick={() => {
                 if (window.confirm('Deseja restaurar os dados de exemplo de Rio Branco?')) {
                   onResetData();
                   showToast('Dados restaurados', 'Banco resetado com os dados iniciais.', 'info');
@@ -431,7 +893,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
 
         {/* Navigation Tabs (Dashboard Financeiro, Estoque Monitor, Comissões, Vendedores, Pedidos...) */}
-        <div className="flex items-center gap-1 overflow-x-auto pt-4 mt-2 border-t border-white/10 text-xs">
+        <div className="flex items-center gap-1 overflow-x-auto pt-4 mt-2 border-t border-white/10 text-xs no-print">
           <button
             onClick={() => setActiveTab('financeiro')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold transition-all whitespace-nowrap ${
@@ -716,45 +1178,99 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* Tab 2: Escolas */}
+      {/* Tab 2: Cadastro & Gestão Completa de Escolas */}
       {activeTab === 'escolas' && (
-        <div className="p-5 space-y-4 text-xs">
-          <div className="flex items-center justify-between">
+        <div className="p-5 space-y-5 text-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-50/70 p-4 rounded-2xl border border-[#0D3B8E]/20">
             <div>
-              <h3 className="text-base font-bold text-slate-900">
-                Escolas Particulares Cadastradas em Rio Branco
+              <h3 className="text-base font-black text-[#0D3B8E]">
+                Escolas Particulares Parceiras de Rio Branco - AC
               </h3>
-              <p className="text-slate-500">
-                Gerencie as instituições parceiras e listas homologadas para 2027
+              <p className="text-slate-600 text-[11px] mt-0.5">
+                Cadastre instituições, edite endereços, contatos e gerencie turmas do catálogo 2027
               </p>
             </div>
             <button
+              type="button"
               onClick={() => setShowAddEscola(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] font-black rounded-xl shadow-xs border border-[#FFC700] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2.5 bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] font-black rounded-xl shadow-md border-2 border-[#FFC700] transition-transform active:scale-95 cursor-pointer self-start sm:self-auto"
             >
               <Plus className="w-4 h-4 text-[#0D3B8E]" />
-              <span>Nova Escola</span>
+              <span>+ Cadastrar Nova Escola</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {escolas.map((esc) => {
               const escTurmas = turmas.filter((t) => t.escola_id === esc.id);
+              const badgeBg = esc.badge_color || '#0D3B8E';
+
               return (
                 <div
                   key={esc.id}
-                  className="p-4 rounded-2xl border border-slate-200 bg-white hover:border-[#0D3B8E] transition-all space-y-2"
+                  className="p-4 rounded-2xl border-2 border-slate-200 bg-white hover:border-[#FFC700] transition-all space-y-3 flex flex-col justify-between shadow-xs"
                 >
-                  <div className="flex items-start justify-between">
-                    <span className="font-bold text-sm text-slate-900">{esc.nome}</span>
-                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                      Ativa
-                    </span>
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-4 h-4 rounded-full shrink-0 border border-black/10"
+                          style={{ backgroundColor: badgeBg }}
+                          title={`Cor da instituição: ${badgeBg}`}
+                        />
+                        <span className="font-black text-sm text-slate-900 leading-snug">{esc.nome}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleEscolaAtivo(esc)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full cursor-pointer transition-colors ${
+                          esc.ativo
+                            ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                            : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
+                        }`}
+                        title="Clique para alternar visibilidade na loja"
+                      >
+                        {esc.ativo ? '✓ Ativa' : 'Oculta'}
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 flex items-start gap-1">
+                      <span>📍</span>
+                      <span>{esc.endereco} · {esc.bairro}</span>
+                    </p>
+
+                    {esc.telefone && (
+                      <p className="text-[11px] text-[#0D3B8E] font-semibold flex items-center gap-1">
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>{esc.telefone}</span>
+                      </p>
+                    )}
                   </div>
-                  <p className="text-[11px] text-slate-500">{esc.endereco}</p>
-                  <div className="text-[11px] text-slate-600 font-medium pt-2 border-t border-slate-100 flex justify-between">
-                    <span>{escTurmas.length} turmas vinculadas</span>
-                    <span className="text-slate-400">{esc.bairro}</span>
+
+                  <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-lg">
+                      {escTurmas.length} {escTurmas.length === 1 ? 'turma' : 'turmas'}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditEscola(esc)}
+                        className="p-1.5 text-slate-600 hover:text-[#0D3B8E] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                        title="Editar escola"
+                      >
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteEscola(esc)}
+                        className="p-1.5 text-slate-400 hover:text-[#D92323] hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="Excluir escola"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -766,12 +1282,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
               <form
                 onSubmit={handleCreateEscola}
-                className="bg-white p-5 rounded-3xl max-w-md w-full space-y-3.5 shadow-2xl border border-slate-200"
+                className="bg-white p-6 rounded-3xl max-w-md w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs"
               >
-                <h4 className="text-base font-bold text-slate-900">Cadastrar Nova Escola em Rio Branco</h4>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#0D3B8E] text-[#FFC700] flex items-center justify-center font-bold">
+                      <School className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Cadastrar Nova Escola em Rio Branco</h4>
+                      <p className="text-[11px] text-slate-500">Parceiro Oficial kitGlobo 2027</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEscola(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Nome da Escola: *
+                    Nome da Instituição de Ensino: *
                   </label>
                   <input
                     type="text"
@@ -779,9 +1313,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     placeholder="Ex: Colégio Anglo Acre"
                     value={novaEscolaNome}
                     onChange={(e) => setNovaEscolaNome(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-xl"
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
                   />
                 </div>
+
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
                     Endereço Completo:
@@ -791,34 +1326,150 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     placeholder="Ex: Av. Ceará, 2500"
                     value={novaEscolaEndereco}
                     onChange={(e) => setNovaEscolaEndereco(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-xl"
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
                   />
                 </div>
+
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                    Bairro / Cidade:
+                    Bairro / Região em Rio Branco:
                   </label>
                   <input
                     type="text"
-                    placeholder="Ex: Centro, Rio Branco - AC"
+                    placeholder="Ex: Bosque, Rio Branco - AC"
                     value={novaEscolaBairro}
                     onChange={(e) => setNovaEscolaBairro(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-xl"
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
                   />
                 </div>
-                <div className="flex justify-end gap-2 pt-2">
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     onClick={() => setShowAddEscola(false)}
-                    className="px-3 py-2 rounded-xl border text-slate-600"
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-[#0D3B8E] text-white font-bold rounded-xl"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
                   >
                     Salvar Escola
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Modal Editar Escola */}
+          {showEditEscola && editingEscola && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <form
+                onSubmit={handleSaveEditEscola}
+                className="bg-white p-6 rounded-3xl max-w-md w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#FFC700] text-[#0D3B8E] flex items-center justify-center font-bold">
+                      <Edit3 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Editar Escola</h4>
+                      <p className="text-[11px] text-slate-500">{editingEscola.nome}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditEscola(false);
+                      setEditingEscola(null);
+                    }}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Nome da Escola: *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editEscolaNome}
+                    onChange={(e) => setEditEscolaNome(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Endereço Completo:
+                  </label>
+                  <input
+                    type="text"
+                    value={editEscolaEndereco}
+                    onChange={(e) => setEditEscolaEndereco(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Bairro / Região:
+                  </label>
+                  <input
+                    type="text"
+                    value={editEscolaBairro}
+                    onChange={(e) => setEditEscolaBairro(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Telefone de Contato:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: (68) 3224-4000"
+                    value={editEscolaTelefone}
+                    onChange={(e) => setEditEscolaTelefone(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="editEscolaAtivo"
+                    checked={editEscolaAtivo}
+                    onChange={(e) => setEditEscolaAtivo(e.target.checked)}
+                    className="w-4 h-4 text-[#0D3B8E] rounded focus:ring-[#FFC700]"
+                  />
+                  <label htmlFor="editEscolaAtivo" className="text-xs font-bold text-slate-800 cursor-pointer">
+                    Escola Ativa (Visível na Vitrine Pública)
+                  </label>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditEscola(false);
+                      setEditingEscola(null);
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
+                  >
+                    Salvar Alterações
                   </button>
                 </div>
               </form>
@@ -960,24 +1611,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* Tab 4: Kits & Itens */}
+      {/* Tab 4: Kits & Itens com Inclusão e Alteração de Produtos e Imagens via Upload Local */}
       {activeTab === 'kits' && (
-        <div className="p-5 space-y-4 text-xs">
-          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div>
-              <label className="font-bold text-slate-700 block mb-1">
-                Selecione a Turma para Gerenciar os Itens do kitGlobo:
+        <div className="p-5 space-y-5 text-xs">
+          {/* Seletor de Turma e Gestão do Preço Base */}
+          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <label className="font-bold text-slate-800 block text-xs">
+                Selecione a Turma para Gerenciar os Produtos e Materiais:
               </label>
               <select
                 value={selectedKitTurmaId}
-                onChange={(e) => setSelectedKitTurmaId(e.target.value)}
-                className="px-3 py-2 bg-white border border-slate-300 rounded-xl font-bold text-xs text-slate-900"
+                onChange={(e) => {
+                  setSelectedKitTurmaId(e.target.value);
+                  setIsEditingPrice(false);
+                }}
+                className="px-3.5 py-2.5 bg-white border-2 border-slate-300 rounded-xl font-bold text-xs text-slate-900 focus:border-[#0D3B8E] focus:outline-none"
               >
                 {turmas.map((t) => {
                   const esc = escolas.find((e) => e.id === t.escola_id);
+                  const hasKit = kits.some((k) => k.turma_id === t.id);
                   return (
                     <option key={t.id} value={t.id}>
-                      {esc?.nome} - {t.serie} ({t.turno})
+                      {esc?.nome} — {t.serie} ({t.turno}) {hasKit ? '✓' : '(Sem Kit)'}
                     </option>
                   );
                 })}
@@ -985,64 +1641,1056 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
 
             {activeKit && (
-              <div className="text-right">
-                <span className="text-[11px] text-slate-500 block">Preço Base do Kit Fechado:</span>
-                <span className="text-xl font-black text-[#D92323] font-mono tabular-nums">
-                  {formatCurrency(activeKit.preco)}
-                </span>
+              <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-3">
+                <div>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold block">
+                    Preço Base do Kit Fechado
+                  </span>
+                  {isEditingPrice ? (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-sm font-black text-slate-500">R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={tempPrice}
+                        onChange={(e) => setTempPrice(e.target.value)}
+                        className="w-24 px-2 py-1 border-2 border-[#0D3B8E] rounded-lg font-mono font-bold text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const val = parseFloat(tempPrice);
+                          if (isNaN(val) || val <= 0) {
+                            showToast('Valor Inválido', 'Digite um valor numérico válido.', 'error');
+                            return;
+                          }
+                          const updated = { ...activeKit, preco: val };
+                          onSaveKit(updated);
+                          setIsEditingPrice(false);
+                          showToast('Preço Atualizado!', `Novo valor base do kit: ${formatCurrency(val)}`, 'success');
+                        }}
+                        className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer"
+                        title="Salvar novo preço"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingPrice(false)}
+                        className="p-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg cursor-pointer"
+                        title="Cancelar"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xl font-black text-[#D92323] font-mono tabular-nums">
+                      {formatCurrency(activeKit.preco)}
+                    </span>
+                  )}
+                </div>
+
+                {!isEditingPrice && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempPrice(activeKit.preco.toString());
+                      setIsEditingPrice(true);
+                    }}
+                    className="p-2 text-slate-500 hover:text-[#0D3B8E] hover:bg-blue-50 rounded-xl transition-colors cursor-pointer"
+                    title="Editar Preço Base"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )}
           </div>
 
           {activeKit ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="font-bold text-slate-900 text-sm">
-                  Lista de Materiais Obrigatórios ({activeKit.itens_json.length} itens)
-                </h4>
-              </div>
-
-              <div className="border border-slate-200 rounded-2xl divide-y divide-slate-100 max-h-72 overflow-y-auto">
-                {activeKit.itens_json.map((it, idx) => (
-                  <div key={idx} className="p-3 flex items-center justify-between bg-white hover:bg-slate-50">
-                    <div>
-                      <span className="font-semibold text-slate-800">{it.nome}</span>
-                      {it.marca_sugerida && (
-                        <span className="text-slate-400 text-[11px] ml-2">
-                          (Marca: {it.marca_sugerida})
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-mono bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-700">
-                      {it.quantidade} {it.unidade}
-                    </span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Itens Adicionais Cadastrados */}
-              <div className="pt-2">
-                <h4 className="font-bold text-slate-900 text-sm mb-2">
-                  Itens Extras Cadastrados para este Kit ({activeKit.itens_extras_json.length})
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {activeKit.itens_extras_json.map((extra) => (
-                    <div key={extra.id} className="p-3 rounded-xl border border-slate-200 bg-white flex justify-between items-center">
-                      <div>
-                        <strong className="text-slate-800 block">{extra.nome}</strong>
-                        <span className="text-slate-500 text-[11px]">{extra.descricao}</span>
-                      </div>
-                      <span className="font-mono font-bold text-emerald-700">
-                        {formatCurrency(extra.preco)}
-                      </span>
-                    </div>
-                  ))}
+            <div className="space-y-6">
+              {/* Barra de Ações: Adicionar Itens e Produtos Extras com Imagens */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-blue-50/70 border border-[#0D3B8E]/20 rounded-2xl">
+                <div>
+                  <h4 className="font-bold text-[#0D3B8E] text-xs">
+                    Catálogo de Materiais & Produtos da Turma: {selectedTurma?.serie}
+                  </h4>
+                  <p className="text-[11px] text-slate-600">
+                    {selectedEscolaForKit?.nome} · Ano Letivo 2027
+                  </p>
                 </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAddItemModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#FFC700]" />
+                    <span>+ Material Obrigatório</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraImagePreview(null);
+                      setShowAddExtraModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] font-black rounded-xl shadow-xs border-2 border-[#FFC700] transition-colors cursor-pointer"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-[#0D3B8E]" />
+                    <span>+ Produto Extra com Imagem (Host Local)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Seção 1: Materiais Obrigatórios do Kit */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <Package className="w-4 h-4 text-[#0D3B8E]" />
+                    <span>Materiais Obrigatórios no Kit Fechado ({activeKit.itens_json.length} itens)</span>
+                  </h4>
+                  <span className="text-[11px] text-slate-500">
+                    Itens que compõem o kit selado na Papelaria Globo
+                  </span>
+                </div>
+
+                <div className="border border-slate-200 rounded-2xl divide-y divide-slate-100 max-h-80 overflow-y-auto bg-white shadow-xs">
+                  {activeKit.itens_json.length === 0 ? (
+                    <div className="p-6 text-center text-slate-500">
+                      Nenhum material cadastrado neste kit ainda.
+                    </div>
+                  ) : (
+                    activeKit.itens_json.map((it, idx) => (
+                      <div
+                        key={it.id || idx}
+                        className="p-3 flex items-center justify-between gap-3 bg-white hover:bg-slate-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3">
+                          {it.foto_url ? (
+                            <img
+                              src={it.foto_url}
+                              alt={it.nome}
+                              className="w-10 h-10 rounded-lg object-cover border border-slate-200"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400">
+                              <ImageIcon className="w-5 h-5" />
+                            </div>
+                          )}
+                          <div>
+                            <span className="font-bold text-slate-800 block text-xs">{it.nome}</span>
+                            <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                              {it.marca_sugerida && <span>Marca: <strong className="text-slate-700">{it.marca_sugerida}</strong></span>}
+                              <span>·</span>
+                              <span className="capitalize">{it.categoria.replace('_', ' ')}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono bg-blue-50 text-[#0D3B8E] px-2.5 py-1 rounded-lg font-bold text-xs border border-blue-100">
+                            {it.quantidade} {it.unidade}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditItem(it)}
+                            className="p-1.5 text-slate-400 hover:text-[#0D3B8E] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                            title="Editar material"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Deseja remover "${it.nome}" deste kit?`)) {
+                                const updated: Kit = {
+                                  ...activeKit,
+                                  itens_json: activeKit.itens_json.filter((_, i) => i !== idx),
+                                };
+                                onSaveKit(updated);
+                                showToast('Material Removido', `Item excluído da lista obrigatória.`, 'info');
+                              }
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-[#D92323] hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title="Remover material"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Seção 2: Produtos e Acessórios Extras Opcionais com Upload de Imagem */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <ImageIcon className="w-4 h-4 text-[#D92323]" />
+                      <span>Produtos Extras Disponíveis para Venda ({activeKit.itens_extras_json?.length || 0})</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500">
+                      Produtos opcionais com fotos locais (mochilas, estojos, calculadoras) que os pais podem incluir no pedido
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraImagePreview(null);
+                      setShowAddExtraModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] font-black rounded-xl text-xs cursor-pointer shadow-xs"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Adicionar Produto</span>
+                  </button>
+                </div>
+
+                {(!activeKit.itens_extras_json || activeKit.itens_extras_json.length === 0) ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 space-y-2">
+                    <p className="text-slate-500">Nenhum produto extra cadastrado para esta série ainda.</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddExtraModal(true)}
+                      className="px-4 py-2 bg-[#0D3B8E] text-white font-bold rounded-xl text-xs cursor-pointer"
+                    >
+                      Cadastrar Primeiro Produto com Imagem
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {activeKit.itens_extras_json.map((extra) => (
+                      <div
+                        key={extra.id}
+                        className="p-3.5 rounded-2xl border-2 border-slate-200 bg-white hover:border-[#FFC700] transition-all flex flex-col justify-between shadow-xs"
+                      >
+                        <div>
+                          {extra.foto_url ? (
+                            <div className="w-full h-32 mb-2 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 relative group">
+                              <img
+                                src={extra.foto_url}
+                                alt={extra.nome}
+                                className="w-full h-full object-cover"
+                              />
+                              <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
+                                Foto Local
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="w-full h-24 mb-2 rounded-xl bg-slate-100 border border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400">
+                              <ImageIcon className="w-6 h-6 mb-1 text-slate-300" />
+                              <span className="text-[10px]">Sem imagem vinculada</span>
+                            </div>
+                          )}
+
+                          <div className="flex items-start justify-between gap-2 mt-1">
+                            <strong className="text-slate-900 block text-xs leading-tight">{extra.nome}</strong>
+                            <span className="font-mono font-black text-[#D92323] whitespace-nowrap">
+                              {formatCurrency(extra.preco)}
+                            </span>
+                          </div>
+
+                          <span className="inline-block bg-slate-100 text-slate-600 text-[10px] px-2 py-0.5 rounded font-semibold mt-1">
+                            {extra.categoria === 'mochilas_estojos'
+                              ? 'Mochilas & Estojos'
+                              : extra.categoria === 'escrita_premium'
+                              ? 'Escrita Premium'
+                              : extra.categoria === 'artes'
+                              ? 'Artes & Desenho'
+                              : 'Organização'}
+                          </span>
+
+                          <p className="text-slate-500 text-[11px] mt-1.5 line-clamp-2">
+                            {extra.descricao}
+                          </p>
+                        </div>
+
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                          <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
+                            Disponível na Loja
+                          </span>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditExtra(extra)}
+                              className="p-1.5 text-slate-400 hover:text-[#0D3B8E] hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                              title="Editar produto extra"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (window.confirm(`Deseja excluir o produto "${extra.nome}" deste kit?`)) {
+                                  const updated: Kit = {
+                                    ...activeKit,
+                                    itens_extras_json: activeKit.itens_extras_json.filter((ex) => ex.id !== extra.id),
+                                  };
+                                  onSaveKit(updated);
+                                  showToast('Produto Excluído', `${extra.nome} foi removido do catálogo.`, 'info');
+                                }
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-[#D92323] hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Excluir produto extra"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ) : (
-            <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300">
-              <p className="text-slate-500">Nenhum kit cadastrado para esta turma ainda.</p>
+            <div className="p-10 text-center bg-slate-50 rounded-3xl border-2 border-dashed border-[#0D3B8E]/25 space-y-3">
+              <div className="w-12 h-12 bg-blue-100 text-[#0D3B8E] rounded-2xl flex items-center justify-center mx-auto">
+                <Package className="w-6 h-6" />
+              </div>
+              <h4 className="text-base font-bold text-slate-900">
+                Nenhum Kit Escolar Cadastrado para esta Turma
+              </h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                A turma <strong>{selectedTurma?.serie}</strong> ainda não possui uma lista de materiais vinculada para o ano 2027.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!selectedTurma) return;
+                  const newKit: Kit = {
+                    id: `kit-${selectedTurma.id}-${Date.now().toString(36)}`,
+                    turma_id: selectedTurma.id,
+                    preco: 280.0,
+                    itens_json: [
+                      {
+                        id: `it-${Date.now()}-1`,
+                        nome: 'Caderno Universitário Capa Dura 200 fls',
+                        quantidade: 2,
+                        unidade: 'unid',
+                        marca_sugerida: 'Tilibra',
+                        categoria: 'caderno',
+                        obrigatorio: true,
+                      },
+                      {
+                        id: `it-${Date.now()}-2`,
+                        nome: 'Caixa de Lápis de Cor 24 Cores EcoLápis',
+                        quantidade: 1,
+                        unidade: 'cx',
+                        marca_sugerida: 'Faber-Castell',
+                        categoria: 'arte_pintura',
+                        obrigatorio: true,
+                      },
+                      {
+                        id: `it-${Date.now()}-3`,
+                        nome: 'Resma de Papel Chamex A4 500 Folhas',
+                        quantidade: 1,
+                        unidade: 'pct',
+                        marca_sugerida: 'Chamex',
+                        categoria: 'caderno',
+                        obrigatorio: true,
+                      },
+                    ],
+                    itens_extras_json: [],
+                  };
+                  onSaveKit(newKit);
+                  showToast('Kit Inicializado!', `Kit oficial criado para ${selectedTurma.serie}.`, 'success');
+                }}
+                className="px-5 py-2.5 bg-[#FFC700] hover:bg-[#E5B300] text-[#0D3B8E] font-black rounded-xl text-xs shadow-md border-2 border-[#FFC700] cursor-pointer"
+              >
+                + Criar Kit Oficial para esta Turma
+              </button>
+            </div>
+          )}
+
+          {/* Modal: Inclusão de Novo Produto / Item Extra com Upload de Imagem */}
+          {showAddExtraModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!activeKit || !extraNome.trim() || !extraPreco) return;
+
+                  const newExtra: ItemExtra = {
+                    id: `ext-${Date.now().toString(36)}`,
+                    nome: extraNome.trim(),
+                    preco: parseFloat(extraPreco) || 0,
+                    descricao: extraDescricao.trim() || 'Item adicional comercializado pela Papelaria Globo',
+                    categoria: extraCategoria,
+                    foto_url: extraImagePreview || undefined,
+                  };
+
+                  const updated: Kit = {
+                    ...activeKit,
+                    itens_extras_json: [...(activeKit.itens_extras_json || []), newExtra],
+                  };
+
+                  onSaveKit(updated);
+                  showToast('Produto Adicionado!', `${newExtra.nome} incluído aos extras do kit com sucesso.`, 'success');
+                  setShowAddExtraModal(false);
+                  setExtraNome('');
+                  setExtraPreco('');
+                  setExtraDescricao('');
+                  setExtraImagePreview(null);
+                }}
+                className="bg-white p-6 rounded-3xl max-w-lg w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#FFC700] text-[#0D3B8E] flex items-center justify-center font-bold">
+                      <Upload className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Novo Produto / Item Extra com Imagem</h4>
+                      <p className="text-[11px] text-slate-500">Cadastrar no catálogo local da Papelaria Globo</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddExtraModal(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Nome do Produto Extra: *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Mochila com Rodinhas e Alça Acolchoada"
+                    value={extraNome}
+                    onChange={(e) => setExtraNome(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Preço Unitário (R$): *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      placeholder="0.00"
+                      value={extraPreco}
+                      onChange={(e) => setExtraPreco(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-mono font-bold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Categoria do Produto:
+                    </label>
+                    <select
+                      value={extraCategoria}
+                      onChange={(e) => setExtraCategoria(e.target.value as any)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="mochilas_estojos">Mochilas & Estojos</option>
+                      <option value="escrita_premium">Escrita Premium</option>
+                      <option value="organizacao">Organização</option>
+                      <option value="artes">Artes & Pintura</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Descrição do Produto:
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Detalhes sobre o material, compartimentos, marca e garantia..."
+                    value={extraDescricao}
+                    onChange={(e) => setExtraDescricao(e.target.value)}
+                    className="w-full px-3.5 py-2 border-2 border-slate-200 rounded-xl font-medium focus:border-[#0D3B8E] focus:outline-none resize-none"
+                  />
+                </div>
+
+                {/* Espaço para Imagem via Host Local / Upload FileReader */}
+                <div className="space-y-2 bg-slate-50 p-3.5 rounded-2xl border-2 border-dashed border-[#0D3B8E]/30">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-[#0D3B8E]">
+                    <ImageIcon className="w-4 h-4 text-[#D92323]" />
+                    <span>Upload da Imagem do Produto (Host Local / Arquivo):</span>
+                  </label>
+
+                  {extraImagePreview ? (
+                    <div className="space-y-2">
+                      <div className="relative w-full h-36 rounded-xl overflow-hidden border-2 border-[#0D3B8E] bg-white">
+                        <img
+                          src={extraImagePreview}
+                          alt="Pré-visualização do produto"
+                          className="w-full h-full object-contain"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setExtraImagePreview(null)}
+                          className="absolute top-2 right-2 bg-[#D92323] text-white p-1 rounded-lg shadow-md hover:bg-rose-700 cursor-pointer"
+                          title="Remover imagem"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-emerald-700 font-bold block text-center">
+                        ✓ Imagem pronta para inclusão no kit
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 px-2">
+                      <Upload className="w-8 h-8 text-[#0D3B8E] mx-auto mb-2 opacity-70" />
+                      <label className="inline-block px-4 py-2 bg-white text-[#0D3B8E] border-2 border-[#0D3B8E] font-bold rounded-xl cursor-pointer hover:bg-blue-50 transition-colors shadow-xs">
+                        <span>Escolher Arquivo do Computador</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleLocalImageUpload(e, setExtraImagePreview)}
+                        />
+                      </label>
+                      <p className="text-[10px] text-slate-500 mt-2">
+                        Formatos suportados: PNG, JPG, JPEG, WEBP (Máx: 5MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddExtraModal(false)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
+                  >
+                    Salvar Produto Extra
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Modal: Inclusão de Material Obrigatório ao Kit */}
+          {showAddItemModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!activeKit || !itemNome.trim() || itemQuantidade <= 0) return;
+
+                  const newItem: ItemKit = {
+                    id: `it-${Date.now().toString(36)}`,
+                    nome: itemNome.trim(),
+                    quantidade: itemQuantidade,
+                    unidade: itemUnidade.trim() || 'unid',
+                    marca_sugerida: itemMarca.trim() || undefined,
+                    categoria: itemCategoria,
+                    obrigatorio: true,
+                    foto_url: itemImagePreview || undefined,
+                  };
+
+                  const updated: Kit = {
+                    ...activeKit,
+                    itens_json: [...activeKit.itens_json, newItem],
+                  };
+
+                  onSaveKit(updated);
+                  showToast('Material Cadastrado!', `${newItem.nome} inserido na lista do kit.`, 'success');
+                  setShowAddItemModal(false);
+                  setItemNome('');
+                  setItemQuantidade(1);
+                  setItemMarca('');
+                  setItemImagePreview(null);
+                }}
+                className="bg-white p-6 rounded-3xl max-w-lg w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#0D3B8E] text-[#FFC700] flex items-center justify-center font-bold">
+                      <Plus className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Adicionar Material Obrigatório</h4>
+                      <p className="text-[11px] text-slate-500">Item obrigatório para a turma {selectedTurma?.serie}</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddItemModal(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Nome do Material: *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Tesoura Sem Ponta Mundial"
+                    value={itemNome}
+                    onChange={(e) => setItemNome(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Quantidade: *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={itemQuantidade}
+                      onChange={(e) => setItemQuantidade(parseInt(e.target.value) || 1)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-mono font-bold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Unidade:
+                    </label>
+                    <select
+                      value={itemUnidade}
+                      onChange={(e) => setItemUnidade(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="unid">Unidade (unid)</option>
+                      <option value="cx">Caixa (cx)</option>
+                      <option value="pct">Pacote (pct)</option>
+                      <option value="folhas">Folhas</option>
+                      <option value="conj">Conjunto</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Marca Sugerida:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Faber-Castell, Acrilex"
+                      value={itemMarca}
+                      onChange={(e) => setItemMarca(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Categoria:
+                    </label>
+                    <select
+                      value={itemCategoria}
+                      onChange={(e) => setItemCategoria(e.target.value as any)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="caderno">Caderno / Papelaria</option>
+                      <option value="escrita">Escrita & Correção</option>
+                      <option value="arte_pintura">Arte & Pintura</option>
+                      <option value="geometria_organizacao">Geometria & Medidas</option>
+                      <option value="higiene_apoio">Higiene & Apoio</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Upload de foto opcional do material */}
+                <div className="space-y-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                  <label className="text-[11px] font-bold text-slate-700 block">
+                    Foto do Material (Opcional):
+                  </label>
+                  {itemImagePreview ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={itemImagePreview}
+                        alt="Preview"
+                        className="w-12 h-12 rounded-lg object-cover border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setItemImagePreview(null)}
+                        className="text-[11px] text-[#D92323] font-bold hover:underline cursor-pointer"
+                      >
+                        Remover Foto
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-slate-700 font-semibold cursor-pointer hover:bg-slate-100">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Carregar Foto Local</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleLocalImageUpload(e, setItemImagePreview)}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddItemModal(false)}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
+                  >
+                    Salvar Material
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Modal: Edição de Produto / Item Extra */}
+          {showEditExtraModal && editingExtra && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <form
+                onSubmit={handleSaveEditExtra}
+                className="bg-white p-6 rounded-3xl max-w-lg w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#0D3B8E] text-[#FFC700] flex items-center justify-center font-bold">
+                      <Edit3 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Editar Produto Extra</h4>
+                      <p className="text-[11px] text-slate-500">Alterar dados, valor e imagem do produto</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditExtraModal(false);
+                      setEditingExtra(null);
+                    }}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Nome do Produto Extra: *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editExtraNome}
+                    onChange={(e) => setEditExtraNome(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Preço Unitário (R$): *
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      value={editExtraPreco}
+                      onChange={(e) => setEditExtraPreco(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-mono font-bold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Categoria do Produto:
+                    </label>
+                    <select
+                      value={editExtraCategoria}
+                      onChange={(e) => setEditExtraCategoria(e.target.value as any)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="mochilas_estojos">Mochilas & Estojos</option>
+                      <option value="escrita_premium">Escrita Premium</option>
+                      <option value="organizacao">Organização</option>
+                      <option value="artes">Artes & Pintura</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Descrição do Produto:
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={editExtraDescricao}
+                    onChange={(e) => setEditExtraDescricao(e.target.value)}
+                    className="w-full px-3.5 py-2 border-2 border-slate-200 rounded-xl font-medium focus:border-[#0D3B8E] focus:outline-none resize-none"
+                  />
+                </div>
+
+                {/* Espaço para Imagem via Host Local / Upload FileReader */}
+                <div className="space-y-2 bg-slate-50 p-3.5 rounded-2xl border-2 border-dashed border-[#0D3B8E]/30">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-[#0D3B8E]">
+                    <ImageIcon className="w-4 h-4 text-[#D92323]" />
+                    <span>Upload da Imagem do Produto (Host Local / Arquivo):</span>
+                  </label>
+
+                  {editExtraImagePreview ? (
+                    <div className="space-y-2">
+                      <div className="relative w-full h-36 rounded-xl overflow-hidden border-2 border-[#0D3B8E] bg-white">
+                        <img
+                          src={editExtraImagePreview}
+                          alt="Pré-visualização do produto"
+                          className="w-full h-full object-contain"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setEditExtraImagePreview(null)}
+                          className="absolute top-2 right-2 bg-[#D92323] text-white p-1 rounded-lg shadow-md hover:bg-rose-700 cursor-pointer"
+                          title="Remover imagem"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-emerald-700 font-bold block text-center">
+                        ✓ Imagem atualizada pronta para salvar
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 px-2">
+                      <Upload className="w-8 h-8 text-[#0D3B8E] mx-auto mb-2 opacity-70" />
+                      <label className="inline-block px-4 py-2 bg-white text-[#0D3B8E] border-2 border-[#0D3B8E] font-bold rounded-xl cursor-pointer hover:bg-blue-50 transition-colors shadow-xs">
+                        <span>Escolher Nova Imagem Local</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleLocalImageUpload(e, setEditExtraImagePreview)}
+                        />
+                      </label>
+                      <p className="text-[10px] text-slate-500 mt-2">
+                        Formatos suportados: PNG, JPG, JPEG, WEBP (Máx: 5MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditExtraModal(false);
+                      setEditingExtra(null);
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Modal: Edição de Material Obrigatório do Kit */}
+          {showEditItemModal && editingItem && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+              <form
+                onSubmit={handleSaveEditItem}
+                className="bg-white p-6 rounded-3xl max-w-lg w-full space-y-4 shadow-2xl border-2 border-[#0D3B8E]/20 text-xs max-h-[90vh] overflow-y-auto"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-[#0D3B8E] text-[#FFC700] flex items-center justify-center font-bold">
+                      <Edit3 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">Editar Material Obrigatório</h4>
+                      <p className="text-[11px] text-slate-500">Alterar quantidade, marca e categoria</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditItemModal(false);
+                      setEditingItem(null);
+                    }}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Nome do Material: *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editItemNome}
+                    onChange={(e) => setEditItemNome(e.target.value)}
+                    className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Quantidade: *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      required
+                      value={editItemQuantidade}
+                      onChange={(e) => setEditItemQuantidade(parseInt(e.target.value) || 1)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-mono font-bold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Unidade:
+                    </label>
+                    <select
+                      value={editItemUnidade}
+                      onChange={(e) => setEditItemUnidade(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="unid">Unidade (unid)</option>
+                      <option value="cx">Caixa (cx)</option>
+                      <option value="pct">Pacote (pct)</option>
+                      <option value="folhas">Folhas</option>
+                      <option value="conj">Conjunto</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Marca Sugerida:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Faber-Castell, Acrilex"
+                      value={editItemMarca}
+                      onChange={(e) => setEditItemMarca(e.target.value)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold focus:border-[#0D3B8E] focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Categoria:
+                    </label>
+                    <select
+                      value={editItemCategoria}
+                      onChange={(e) => setEditItemCategoria(e.target.value as any)}
+                      className="w-full px-3.5 py-2.5 border-2 border-slate-200 rounded-xl font-semibold bg-white focus:border-[#0D3B8E] focus:outline-none"
+                    >
+                      <option value="caderno">Caderno / Papelaria</option>
+                      <option value="escrita">Escrita & Correção</option>
+                      <option value="arte_pintura">Arte & Pintura</option>
+                      <option value="geometria_organizacao">Geometria & Medidas</option>
+                      <option value="higiene_apoio">Higiene & Apoio</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Upload de foto opcional do material */}
+                <div className="space-y-2 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                  <label className="text-[11px] font-bold text-slate-700 block">
+                    Foto do Material (Opcional):
+                  </label>
+                  {editItemImagePreview ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={editItemImagePreview}
+                        alt="Preview"
+                        className="w-12 h-12 rounded-lg object-cover border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditItemImagePreview(null)}
+                        className="text-[11px] text-[#D92323] font-bold hover:underline cursor-pointer"
+                      >
+                        Remover Foto
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-slate-700 font-semibold cursor-pointer hover:bg-slate-100">
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Carregar Foto Local</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleLocalImageUpload(e, setEditItemImagePreview)}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditItemModal(false);
+                      setEditingItem(null);
+                    }}
+                    className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-bold hover:bg-slate-50 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 bg-[#0D3B8E] hover:bg-[#09265E] text-white font-black rounded-xl shadow-md border-2 border-[#FFC700] cursor-pointer"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </form>
             </div>
           )}
         </div>

@@ -93,30 +93,44 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Center / Search info */}
-        <div className="hidden lg:flex items-center gap-4 text-xs text-white/95">
-          <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-xs px-3.5 py-1.5 rounded-xl border border-[#FFC700]/30 shadow-xs">
-            <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
-            <span>Kits fechados oficiais com materiais homologados para 2027</span>
-          </div>
-        </div>
-
-        {/* Right Actions: Admin & Cart */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          {/* Admin Toggle */}
+        {/* Center: Main Navigation Tabs (Loja vs Painel Admin) */}
+        <div className="flex items-center gap-1.5 bg-[#09265E] p-1 rounded-2xl border-2 border-[#FFC700]/40 shadow-inner">
           <button
-            onClick={onToggleAdmin}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition-all ${
-              isAdminOpen
-                ? 'bg-[#FFC700] text-[#0D3B8E] border-[#FFC700] shadow-md'
-                : 'bg-white/10 hover:bg-white/20 text-white border-[#FFC700]/30'
+            type="button"
+            onClick={() => {
+              if (isAdminOpen) onToggleAdmin();
+            }}
+            className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
+              !isAdminOpen
+                ? 'bg-[#FFC700] text-[#0D3B8E] shadow-md border border-[#FFC700]'
+                : 'text-blue-100 hover:text-white hover:bg-white/10'
             }`}
-            title="Acessar Painel do Administrador"
           >
-            <ShieldCheck className="w-4 h-4 text-[#FFC700]" />
-            <span className="hidden sm:inline">Painel Admin</span>
+            <Sparkles className="w-3.5 h-3.5 text-[#D92323]" />
+            <span>Loja de Kits 2027</span>
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              if (!isAdminOpen) onToggleAdmin();
+            }}
+            className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 text-xs font-black rounded-xl transition-all cursor-pointer ${
+              isAdminOpen
+                ? 'bg-[#FFC700] text-[#0D3B8E] shadow-md border border-[#FFC700]'
+                : 'text-blue-100 hover:text-white hover:bg-white/10'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-[#D92323]" />
+            <span>Painel Administrativo</span>
+            <span className="hidden sm:inline bg-[#D92323] text-white text-[9px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+              Gestão
+            </span>
+          </button>
+        </div>
+
+        {/* Right Actions: Cart */}
+        <div className="flex items-center gap-2 sm:gap-3">
           {/* Cart Button: Prominent CTA with #FFC700 background & #D92323 notification badge */}
           <button
             onClick={onOpenCart}

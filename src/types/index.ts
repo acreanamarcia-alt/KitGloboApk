@@ -30,6 +30,7 @@ export interface ItemKit {
   marca_sugerida?: string;
   categoria: 'caderno' | 'escrita' | 'arte_pintura' | 'geometria_organizacao' | 'higiene_apoio';
   obrigatorio: boolean;
+  foto_url?: string;
 }
 
 export interface ItemExtra {

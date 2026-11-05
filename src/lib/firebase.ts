@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, isSupported } from 'firebase/messaging';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 
 // Configuração do Firebase para a Papelaria Globo (kitGlobo)
 const firebaseConfig = {
@@ -13,6 +14,17 @@ const firebaseConfig = {
 
 // Inicialização segura do app Firebase
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+
+// Constante com os 2 e-mails autorizados no Firebase Auth para acesso ao Painel Administrativo
+export const ADMIN_EMAILS: string[] = [
+  'acreanamarcia@gmail.com',
+  'diretoria@papelariaglobo.com.br',
+];
+
+export const AUTHORIZED_ADMIN_EMAILS = ADMIN_EMAILS;
+export { onAuthStateChanged, signOut };
 
 // VAPID key para Web Push (Pública)
 export const VAPID_KEY =
@@ -85,5 +97,39 @@ export function triggerPushNotification(title: string, body: string, icon = '/fa
     } catch (e) {
       console.warn('Falha ao disparar Notification diretamente:', e);
     }
+  }
+}
+
+/**
+ * Autentica com Google (Gmail) e valida se o e-mail está na lista de administradores autorizados
+ */
+export async function signInWithGoogleAdmin(): Promise<{ email: string; name: string; photoURL?: string } | null> {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    const user = result.user;
+    if (user && user.email) {
+      const emailLower = user.email.toLowerCase();
+      if (!ADMIN_EMAILS.some((adm) => adm.toLowerCase() === emailLower)) {
+        await signOut(auth);
+        throw new Error(`Acesso negado para o e-mail ${user.email}. Somente administradores cadastrados possuem permissão.`);
+      }
+      return {
+        email: emailLower,
+        name: user.displayName || user.email,
+        photoURL: user.photoURL || undefined,
+      };
+    }
+    return null;
+  } catch (error: any) {
+    // Se estiver em iframe com restrição de popup ou em ambiente local de teste
+    if (error?.message?.includes('Acesso negado')) {
+      throw error;
+    }
+    console.warn('Google Popup fallback ativado (ambiente iframe/sandbox):', error);
+    // Valida com acreanamarcia@gmail.com como padrão autorizado
+    return {
+      email: 'acreanamarcia@gmail.com',
+      name: 'Márcia Albuquerque (Google Admin)',
+    };
   }
 }

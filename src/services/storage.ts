@@ -110,6 +110,12 @@ export function saveEscola(escola: Escola): void {
   setItem(STORAGE_KEYS.ESCOLAS, current);
 }
 
+export function deleteEscola(id: string): void {
+  const current = getEscolas();
+  const updated = current.filter((e) => e.id !== id);
+  setItem(STORAGE_KEYS.ESCOLAS, updated);
+}
+
 // Turmas
 export function getTurmas(): Turma[] {
   return getItem<Turma[]>(STORAGE_KEYS.TURMAS, INITIAL_TURMAS);
@@ -128,6 +134,12 @@ export function saveTurma(turma: Turma): void {
     current.push(turma);
   }
   setItem(STORAGE_KEYS.TURMAS, current);
+}
+
+export function deleteTurma(id: string): void {
+  const current = getTurmas();
+  const updated = current.filter((t) => t.id !== id);
+  setItem(STORAGE_KEYS.TURMAS, updated);
 }
 
 // Kits

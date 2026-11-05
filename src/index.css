@@ -49,22 +49,46 @@
   animation: globoShimmer 1.8s infinite ease-in-out;
 }
 
-/* Print layout for receipt */
+/* Print layout for receipt and Admin Management Reports */
 @media print {
   body {
     background: white !important;
-    color: black !important;
+    color: #0F172A !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
+
   .no-print,
   header,
   footer,
-  main,
-  nav {
+  nav,
+  .cart-drawer-backdrop {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
   }
+
+  /* Ensure card backgrounds and borders print crisply */
+  .shadow-2xl, .shadow-xl, .shadow-lg, .shadow-md, .shadow-sm {
+    box-shadow: none !important;
+  }
+
+  /* Clean table borders and chart scaling */
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  .recharts-responsive-container {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
   @page {
     margin: 1cm;
     size: auto;

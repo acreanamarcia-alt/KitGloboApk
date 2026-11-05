@@ -18,7 +18,9 @@ import {
   createPedido,
   updatePedidoStatus,
   saveEscola,
+  deleteEscola,
   saveTurma,
+  deleteTurma,
   saveKit,
   saveVendedor,
   deleteVendedor,
@@ -47,8 +49,12 @@ import {
   Code2,
   Phone,
   Package,
+  Lock,
+  UserCheck,
+  X,
 } from 'lucide-react';
 import { useFirebaseNotifications } from './hooks/useFirebaseNotifications';
+import { auth, signInWithGoogleAdmin, ADMIN_EMAILS } from './lib/firebase';
 
 const HERO_IMAGE = '/src/assets/images/kitglobo_hero_supplies_1793849387218.jpg';
 const STORE_IMAGE = '/src/assets/images/kitglobo_store_pickup_1793849386990.jpg';
@@ -72,6 +78,8 @@ function MainApp() {
   const [isKitModalOpen, setIsKitModalOpen] = useState<boolean>(false);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
+  const [showAdminLoginModal, setShowAdminLoginModal] = useState<boolean>(false);
+  const [adminLoginLoading, setAdminLoginLoading] = useState<boolean>(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [lastCompletedOrder, setLastCompletedOrder] = useState<Pedido | null>(null);
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState<boolean>(false);
@@ -213,12 +221,54 @@ function MainApp() {
         cartCount={cartItems.length}
         onOpenCart={() => setIsCartOpen(true)}
         isAdminOpen={isAdminOpen}
-        onToggleAdmin={() => setIsAdminOpen((prev) => !prev)}
+        onToggleAdmin={() => {
+          if (isAdminOpen) {
+            setIsAdminOpen(false);
+          } else {
+            const savedAuth = localStorage.getItem('kitglobo_admin_auth') === 'true';
+            const savedUserStr = localStorage.getItem('kitglobo_admin_user');
+            let userEmail = '';
+            if (savedUserStr) {
+              try {
+                userEmail = JSON.parse(savedUserStr)?.email?.toLowerCase() || '';
+              } catch (e) {}
+            }
+            const isAuthorized =
+              (auth.currentUser &&
+                ADMIN_EMAILS.some((e) => e.toLowerCase() === auth.currentUser?.email?.toLowerCase())) ||
+              (savedAuth && ADMIN_EMAILS.some((e) => e.toLowerCase() === userEmail));
+
+            if (isAuthorized) {
+              setIsAdminOpen(true);
+            } else {
+              setShowAdminLoginModal(true);
+            }
+          }
+        }}
       />
 
-      {/* Admin Panel Overlay / View */}
-      {isAdminOpen && (
-        <div className="max-w-6xl mx-auto px-4 w-full">
+      {/* Alternância de Abas: Painel Administrativo ou Loja Oficial */}
+      {isAdminOpen ? (
+        <div className="max-w-6xl mx-auto px-4 w-full py-6 flex-1 animate-fade-in">
+          {/* Barra de Retorno à Loja */}
+          <div className="mb-4 flex items-center justify-between bg-white px-4 py-2.5 rounded-2xl border-2 border-[#0D3B8E]/15 shadow-xs">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="font-bold text-[#0D3B8E]">Painel de Controle Papelaria Globo</span>
+              <span className="text-slate-300">|</span>
+              <span className="text-slate-600 font-medium hidden sm:inline">
+                Gestão Financeira, Produtos, Vendedores, Comissões e Escolas (2027)
+              </span>
+            </div>
+
+            <button
+              onClick={() => setIsAdminOpen(false)}
+              className="text-xs font-black text-[#0D3B8E] hover:text-[#D92323] flex items-center gap-1 cursor-pointer bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-xl transition-colors border border-slate-200"
+            >
+              <span>← Voltar à Loja de Kits</span>
+            </button>
+          </div>
+
           <AdminPanel
             escolas={escolas}
             turmas={turmas}
@@ -226,20 +276,21 @@ function MainApp() {
             pedidos={pedidos}
             vendedores={vendedores}
             onSaveEscola={saveEscola}
+            onDeleteEscola={deleteEscola}
             onSaveTurma={saveTurma}
+            onDeleteTurma={deleteTurma}
             onSaveKit={saveKit}
             onUpdateStatus={updatePedidoStatus}
             onSaveVendedor={saveVendedor}
             onDeleteVendedor={deleteVendedor}
             onResetData={resetToSeedData}
+            onBackToStore={() => setIsAdminOpen(false)}
           />
         </div>
-      )}
-
-      {/* Main Content Area */}
-      <main className="flex-1">
-        {/* Hero Section */}
-        <section className="relative bg-[#0D3B8E] text-white overflow-hidden py-10 sm:py-14 border-b-4 border-[#FFC700]">
+      ) : (
+        <main className="flex-1">
+          {/* Hero Section */}
+          <section className="relative bg-[#0D3B8E] text-white overflow-hidden py-10 sm:py-14 border-b-4 border-[#FFC700]">
           {/* Subtle background glow */}
           <div className="absolute inset-0 bg-radial from-blue-700/40 via-transparent to-transparent pointer-events-none" />
 
@@ -514,7 +565,8 @@ function MainApp() {
             </div>
           </div>
         </section>
-      </main>
+        </main>
+      )}
 
       {/* Footer com Direitos Autorais da Papelaria Globo Ltda, CNPJ, Endereço e @kikomelodoAcre */}
       <footer className="bg-[#0D3B8E] text-white border-t-4 border-[#FFC700] py-8 text-xs">
@@ -618,6 +670,148 @@ function MainApp() {
         isOpen={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}
       />
+
+      {/* Modal de Acesso Administrativo via Google Firebase Auth */}
+      {showAdminLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl border-2 border-[#0D3B8E]/20 shadow-2xl overflow-hidden max-w-md w-full p-6 sm:p-7 space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 bg-[#0D3B8E] text-[#FFC700] rounded-xl flex items-center justify-center border-2 border-[#FFC700] shadow-sm">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div>
+                  <span className="bg-[#FFC700] text-[#0D3B8E] text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Firebase Auth · Gestão 2027
+                  </span>
+                  <h3 className="text-base font-black text-[#0D3B8E]">Acesso ao Painel Administrativo</h3>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdminLoginModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              O acesso aos dados de vendas, estoque, comissões e gestão de kits é restrito aos <strong>2 e-mails autorizados</strong> da Papelaria Globo.
+            </p>
+
+            {/* E-mails permitidos info */}
+            <div className="bg-blue-50/80 border border-blue-200/80 p-3 rounded-2xl text-[11px] text-[#0D3B8E] space-y-1">
+              <span className="font-bold flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-[#0D3B8E]" />
+                E-mails cadastrados em ADMIN_EMAILS:
+              </span>
+              <div className="space-y-0.5 pt-1 text-[11px] text-slate-700 font-mono">
+                <p>1. <span className="font-bold text-[#0D3B8E]">acreanamarcia@gmail.com</span> (Márcia)</p>
+                <p>2. <span className="font-bold text-[#0D3B8E]">diretoria@papelariaglobo.com.br</span> (Roberto)</p>
+              </div>
+            </div>
+
+            {/* Botão Google Login */}
+            <button
+              type="button"
+              disabled={adminLoginLoading}
+              onClick={async () => {
+                setAdminLoginLoading(true);
+                try {
+                  const result = await signInWithGoogleAdmin();
+                  if (result && result.email) {
+                    const isAuth = ADMIN_EMAILS.some((adm) => adm.toLowerCase() === result.email.toLowerCase());
+                    if (!isAuth) {
+                      showToast('Acesso Negado', `E-mail ${result.email} não possui autorização.`, 'error');
+                      return;
+                    }
+                    const userObj = {
+                      nome: result.name || 'Márcia Albuquerque',
+                      email: result.email.toLowerCase(),
+                      cargo: 'Gerência Geral & Operações',
+                      nivel: 'gerencia_total',
+                      nivelLabel: 'Nível 1 - Acesso Operacional Total',
+                    };
+                    localStorage.setItem('kitglobo_admin_auth', 'true');
+                    localStorage.setItem('kitglobo_admin_user', JSON.stringify(userObj));
+                    showToast(`Bem-vindo(a), ${userObj.nome}!`, 'Autenticado com sucesso via Google.', 'success');
+                    setShowAdminLoginModal(false);
+                    setIsAdminOpen(true);
+                  }
+                } catch (err: any) {
+                  showToast('Acesso Negado', err?.message || 'Falha ao autenticar com Google.', 'error');
+                } finally {
+                  setAdminLoginLoading(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 bg-white hover:bg-slate-50 text-slate-700 font-bold rounded-2xl border-2 border-slate-300 shadow-md hover:shadow-lg transition-all active:scale-[0.99] cursor-pointer disabled:opacity-50"
+            >
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+              </svg>
+              <span className="text-xs font-black text-slate-800">
+                {adminLoginLoading ? 'Conectando ao Firebase...' : 'Entrar com Google (Gmail)'}
+              </span>
+            </button>
+
+            {/* Acesso rápido para os 2 perfis cadastrados */}
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-slate-400 block text-center">
+                ou selecione perfil autorizado:
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const userObj = {
+                      nome: 'Márcia Albuquerque',
+                      email: 'acreanamarcia@gmail.com',
+                      cargo: 'Gerência Geral & Operações',
+                      nivel: 'gerencia_total',
+                      nivelLabel: 'Nível 1 - Acesso Operacional Total',
+                    };
+                    localStorage.setItem('kitglobo_admin_auth', 'true');
+                    localStorage.setItem('kitglobo_admin_user', JSON.stringify(userObj));
+                    showToast('Autenticado!', 'Acesso concedido para Márcia Albuquerque.', 'success');
+                    setShowAdminLoginModal(false);
+                    setIsAdminOpen(true);
+                  }}
+                  className="p-2.5 rounded-xl border border-slate-200 hover:border-[#0D3B8E] hover:bg-blue-50 text-left transition-colors cursor-pointer"
+                >
+                  <span className="font-bold text-[#0D3B8E] block">1. Márcia (Gmail)</span>
+                  <span className="text-[10px] text-slate-500 block truncate font-mono">acreanamarcia@...</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const userObj = {
+                      nome: 'Roberto Melo',
+                      email: 'diretoria@papelariaglobo.com.br',
+                      cargo: 'Diretor Financeiro & Auditoria',
+                      nivel: 'diretoria_financeira',
+                      nivelLabel: 'Nível 2 - Acesso Financeiro & Gestão',
+                    };
+                    localStorage.setItem('kitglobo_admin_auth', 'true');
+                    localStorage.setItem('kitglobo_admin_user', JSON.stringify(userObj));
+                    showToast('Autenticado!', 'Acesso concedido para Roberto Melo.', 'success');
+                    setShowAdminLoginModal(false);
+                    setIsAdminOpen(true);
+                  }}
+                  className="p-2.5 rounded-xl border border-slate-200 hover:border-[#0D3B8E] hover:bg-blue-50 text-left transition-colors cursor-pointer"
+                >
+                  <span className="font-bold text-[#0D3B8E] block">2. Roberto Melo</span>
+                  <span className="text-[10px] text-slate-500 block truncate font-mono">diretoria@...</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
