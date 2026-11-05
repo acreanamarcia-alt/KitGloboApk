@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@theme {
+  --color-globo-blue: #0D3B8E;
+  --color-globo-blue-dark: #09265E;
+  --color-globo-yellow: #FFC700;
+  --color-globo-yellow-hover: #E5B300;
+  --color-globo-red: #D92323;
+  --color-globo-red-dark: #B91C1C;
+}
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #F8FAFC;
+    color: #0F172A;
+  }
+
+  ::selection {
+    background-color: #FFC700;
+    color: #0D3B8E;
+  }
+}
+
+/* Custom animation & utility classes */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Shimmer pulse with subtle Globo blue and yellow undertones */
+@keyframes globoShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.globo-skeleton {
+  background: linear-gradient(90deg, #EDF2F9 25%, #E2ECF9 50%, #EDF2F9 75%);
+  background-size: 200% 100%;
+  animation: globoShimmer 1.8s infinite ease-in-out;
+}
+
+/* Print layout for receipt */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print,
+  header,
+  footer,
+  main,
+  nav {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  @page {
+    margin: 1cm;
+    size: auto;
+  }
+}
